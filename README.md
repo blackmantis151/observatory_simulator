@@ -29,3 +29,7 @@ uv sync
 #run simulator
 python tcs_sim/run_all.py
 ```
+
+## License
+
+This project is licensed under the GPLv3 License. See the LICENSE file for details.
