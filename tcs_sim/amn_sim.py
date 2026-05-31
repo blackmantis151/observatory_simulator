@@ -1,4 +1,6 @@
-# amn_sim.py
+# Observatory Simulator for the 2m Telescope at the IUCAA Girawali Observatory 
+# Copyright (C) 2026  Harshit Krishna, Soumadip Bhowmick & Manthan Bhagat
+
 import time
 import threading
 

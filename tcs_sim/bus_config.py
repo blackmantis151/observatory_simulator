@@ -1,7 +1,10 @@
+# Observatory Simulator for the 2m Telescope at the IUCAA Girawali Observatory 
+# Copyright (C) 2026  Harshit Krishna, Soumadip Bhowmick & Manthan Bhagat
+
 import time
 from datetime import datetime
 
-# For the stimulator we use localhost everywhere
+# For the simulator we use localhost everywhere
 TCS_IP = "127.0.0.1"
 SCC_IP = "127.0.0.1"
 
