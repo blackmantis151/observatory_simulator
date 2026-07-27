@@ -4,7 +4,7 @@ import json
 import numpy as np  # Needed for physics limits
 
 from subsystem_base import SubsystemBase
-from bus_config import log
+from utils import log
 
 # --- CONFIGURATION ---
 MAX_VEL = 2.0       # deg/s
@@ -20,8 +20,8 @@ class ALTSubsystem(SubsystemBase):
       2. New Trajectory Tracking (GOTO command)
     """
 
-    def __init__(self):
-        super().__init__("ALT")
+    def __init__(self, comms):
+        super().__init__("ALT", comms)
 
         # --- Legacy State Variables ---
         self.state = "STOPPED"
@@ -74,29 +74,29 @@ class ALTSubsystem(SubsystemBase):
         6. Sends STATUS updates during tracking.
         7. Logs position to disk.
         """
-        # 1. PAUSE EVERYTHING
-        self.tracking_active = False   # <--- STOP Physics reading
-        self._motion_stop = True       # <--- STOP Legacy motion
-        if self._motion_thread and self._motion_thread.is_alive():
-            self._motion_thread.join(timeout=0.2)
+        is_start = (str(params.get("mode", "START")).upper() == "START" or
+                    params.get("trajectory_id") != self.trajectory_id)
+        if is_start:
+            self.tracking_active = False
+            self._motion_stop = True
+            if self._motion_thread and self._motion_thread.is_alive():
+                self._motion_thread.join(timeout=0.2)
         
-        self.state = "SLEWING"
+        self.state = "SLEWING" if is_start else self.state
         self.send_result("ACK", cmd_id=cmd_id)
 
         timestamps = params.get('timestamp')
         positions = params.get('position')
         
         if timestamps and positions:
-            # 2. WIPE OLD DATA (Crucial Fix)
-            self.clear_trajectory_data() 
+            # Merge this rolling window without interrupting tracking
 
-            # 3. LOAD NEW DATA
-            success = self.append_trajectory_data(timestamps, positions)
+            success = self.update_trajectory_data(params)
             
             if success:
-                self.active_cmd_id = cmd_id
-                self.target_reached_flag = False 
-                self.unwrapping = False
+                self.active_cmd_id = cmd_id if is_start else self.active_cmd_id
+                self.target_reached_flag = False if is_start else self.target_reached_flag 
+                self.unwrapping = False if is_start else self.unwrapping
                 
                 # 4. RESUME TRACKING
                 self.tracking_active = True 
@@ -124,7 +124,7 @@ class ALTSubsystem(SubsystemBase):
             # ONLY run physics if we are in Trajectory Mode
             if self.tracking_active:
                 # 1. Get Target from Base Class
-                target = self.get_interpolated_target(start_time)
+                target = self.get_rolling_target(start_time)
                 # If target is None (end of file), hold last known target
                 if target is not None:
                     self.target_pos_deg = target
@@ -332,5 +332,15 @@ class ALTSubsystem(SubsystemBase):
         self.send_result("ACK", cmd_id=cmd_id)
 
 if __name__ == "__main__":
-    sys = ALTSubsystem()
-    sys.run()
+    from bus_config import build_bus_config
+    from comms.factory import create_comms_backend
+
+    bus_config = build_bus_config()
+    comms = create_comms_backend(bus_config, owner="ALT", role="subsystem")
+    comms.start()
+
+    try:
+        sys = ALTSubsystem(comms)
+        sys.run()
+    finally:
+        comms.stop()

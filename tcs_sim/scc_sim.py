@@ -10,31 +10,21 @@
 #   Newest snapshot is always the first data row
 
 import time
-import json
 import threading
 import os
 
-import zmq
 import pandas as pd
 
-from bus_config import HEARTBEAT_ENDPOINT, SCC_TO_TCS_ENDPOINT, now_ts, log
+from utils import now_ts, log
+from comms.message import SimMessage
 
 # CSV log path
 LOG_CSV = "/home/harshit/Observatory_Stimulator/Observatory_Stimulator/tcs_sim/scc_log.csv"
 
 
 class SCCSimulator:
-    def __init__(self):
-        self.ctx = zmq.Context.instance()
-
-        # Heartbeat subscriber (from subsystems)
-        self.hb_sub = self.ctx.socket(zmq.SUB)
-        self.hb_sub.bind(HEARTBEAT_ENDPOINT)
-        self.hb_sub.setsockopt_string(zmq.SUBSCRIBE, "heartbeat.")
-
-        # SCC to TCS publisher
-        self.scc_pub = self.ctx.socket(zmq.PUB)
-        self.scc_pub.bind(SCC_TO_TCS_ENDPOINT)
+    def __init__(self, comms):
+        self.comms = comms
 
         # Live state of subsystems in memory
         # name -> { "state": str, "last_heartbeat": int, "current_pos_deg": float }
@@ -154,9 +144,7 @@ class SCCSimulator:
             "subsystems": self.subsystems,
         }
 
-        # Publish as two frames: topic and JSON
-        self.scc_pub.send_string(topic, flags=zmq.SNDMORE)
-        self.scc_pub.send_string(json.dumps(body))
+        self.comms.send_summary(SimMessage(topic=topic, body=body))
 
         log("SCC", f"SENT TELESCOPESUMMARY: {body}")
 
@@ -183,25 +171,24 @@ class SCCSimulator:
         - Logs each heartbeat snapshot to CSV
         - Background thread sends periodic TELESCOPESUMMARY
         """
-        log("SCC", f"SCC simulator starting, listening for heartbeat on {HEARTBEAT_ENDPOINT}")
-        log("SCC", f"SCC publishing summaries on {SCC_TO_TCS_ENDPOINT}")
+        log("SCC", "SCC simulator starting, listening for heartbeat")
+        log("SCC", "SCC publishing telescope summaries")
 
         # Start periodic summary thread
         threading.Thread(target=self.summary_loop, daemon=True).start()
 
         while self.running:
             try:
-                topic = self.hb_sub.recv_string()
-                body = self.hb_sub.recv_string()
+                message = self.comms.receive_heartbeat(timeout_ms=1000)
             except KeyboardInterrupt:
                 self.running = False
                 break
 
-            try:
-                msg = json.loads(body)
-            except json.JSONDecodeError:
-                log("SCC", f"Invalid heartbeat JSON: {body}")
+            if message is None:
                 continue
+
+            topic = message.topic
+            msg = message.body
 
             source = msg.get("source", "UNKNOWN")
             state = msg.get("state", "UNKNOWN")

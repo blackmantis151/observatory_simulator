@@ -3,7 +3,7 @@ import threading
 import time
 
 from subsystem_base import SubsystemBase
-from bus_config import log
+from utils import log
 
 
 class ENCSubsystem(SubsystemBase):
@@ -15,8 +15,8 @@ class ENCSubsystem(SubsystemBase):
     - Shutter movement time (open/close): assume 5 sec open, 9 sec close
     """
 
-    def __init__(self):
-        super().__init__("ENC")
+    def __init__(self, comms):
+        super().__init__("ENC", comms)
 
         self.shutters = {"SHUTTER1": "CLOSE", "SHUTTER2": "CLOSE"}
         self.shutter_pos = {"SHUTTER1": 0.0, "SHUTTER2": 0.0}

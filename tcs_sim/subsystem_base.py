@@ -1,21 +1,10 @@
 import time
-import json
 import threading
-import pandas as pd
-import numpy as np
+import bisect
 import csv
 import os
-import zmq
-
-
-from bus_config import (
-    CMD_ENDPOINT,
-    RESULT_ENDPOINT,
-    HEARTBEAT_ENDPOINT,
-    STATUS_ENDPOINT,
-    now_ts,
-    log,
-)
+from utils import now_ts, log
+from comms.message import SimMessage
 
 
 class SubsystemBase:
@@ -32,14 +21,20 @@ class SubsystemBase:
       - handle_command(self, msg: dict)
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, comms):
         self.name = name.upper()
+        self.comms = comms
         self.running = True
         
         # --- NEW: File Paths & Thread Safety ---
         self.traj_file = f"trajectory_{self.name.lower()}.csv"
         self.status_file = f"status_{self.name.lower()}.csv"
         self.data_lock = threading.Lock()
+        self.traj_timestamps = []
+        self.traj_positions = []
+        self.trajectory_id = None
+        self.trajectory_revision = -1
+        self.trajectory_starved = False
 
         # --- NEW: Initialize Files & Recover State ---
         self._init_files()
@@ -48,26 +43,6 @@ class SubsystemBase:
         self.state = "IDLE"
         self.current_pos_deg = self._recover_last_position() # <--- CHANGED FROM 0.0
         self.target_pos_deg = 0.0
-
-        self.ctx = zmq.Context.instance()
-
-        # ----- Command SUB (TCS -> subsystem) -----
-        self.cmd_sub = self.ctx.socket(zmq.SUB)
-        self.cmd_sub.connect(CMD_ENDPOINT)
-        topic = f"cmd.{self.name}"
-        self.cmd_sub.setsockopt_string(zmq.SUBSCRIBE, topic)
-
-        # ----- Result PUB (subsystem -> TCS) -----
-        self.result_pub = self.ctx.socket(zmq.PUB)
-        self.result_pub.connect(RESULT_ENDPOINT)
-
-        # ----- Status PUB (subsystem -> TCS) -----
-        self.status_pub = self.ctx.socket(zmq.PUB)
-        self.status_pub.connect(STATUS_ENDPOINT)
-
-        # ----- Heartbeat PUB (subsystem -> SCC) -----
-        self.hb_pub = self.ctx.socket(zmq.PUB)
-        self.hb_pub.connect(HEARTBEAT_ENDPOINT)
 
     # ---------- Generic send helpers ----------
 
@@ -78,11 +53,13 @@ class SubsystemBase:
             "source": self.name,
             "timestamp": now_ts(),
         }
+
         if cmd_id is not None:
             body["cmd_id"] = cmd_id
+
         body.update(extra)
-        self.result_pub.send_string(topic, flags=zmq.SNDMORE)
-        self.result_pub.send_string(json.dumps(body))
+
+        self.comms.send_result(SimMessage(topic=topic, body=body))
         log(self.name, f"SENT on {topic}: {body}")
 
     def send_status(self, cmd_id=None, **extra):
@@ -90,16 +67,18 @@ class SubsystemBase:
         body = {
             "msg_type": "STATUS",
             "source": self.name,
-            "timestamp": now_ts(),
+            "timestamp": time.time(),
             "state": self.state,
             "current_pos_deg": self.current_pos_deg,
             "target_pos_deg": self.target_pos_deg,
         }
+
         if cmd_id is not None:
             body["cmd_id"] = cmd_id
-        body.update(extra)  # subclasses can add fields
-        self.status_pub.send_string(topic, flags=zmq.SNDMORE)
-        self.status_pub.send_string(json.dumps(body))
+
+        body.update(extra)
+
+        self.comms.send_status(SimMessage(topic=topic, body=body))
         log(self.name, f"SENT on {topic}: {body}")
 
     def send_heartbeat(self):
@@ -111,9 +90,8 @@ class SubsystemBase:
             "state": self.state,
             "current_pos_deg": self.current_pos_deg,
         }
-        self.hb_pub.send_string(topic, flags=zmq.SNDMORE)
-        self.hb_pub.send_string(json.dumps(body))
-        # log(self.name, f"SENT HB on {topic}: {body}")
+
+        self.comms.send_heartbeat(SimMessage(topic=topic, body=body))
         
         
         
@@ -195,6 +173,54 @@ class SubsystemBase:
             log(self.name, f"Error appending trajectory: {e}")
             return False
 
+    def update_trajectory_data(self, params):
+        """Atomically start or replace the future part of a rolling trajectory."""
+        timestamps = params.get("timestamp") or []
+        positions = params.get("position") or []
+        trajectory_id = params.get("trajectory_id")
+        revision = params.get("revision", 0)
+        mode = str(params.get("mode", "START")).upper()
+        effective = float(params.get("effective_from", timestamps[0] if timestamps else 0))
+        if (not timestamps or len(timestamps) != len(positions) or
+                any(float(timestamps[i]) >= float(timestamps[i + 1])
+                    for i in range(len(timestamps) - 1))):
+            return False
+        try:
+            pairs = [(float(t), float(p)) for t, p in zip(timestamps, positions)]
+            with self.data_lock:
+                if trajectory_id == self.trajectory_id and revision <= self.trajectory_revision:
+                    log(self.name, f"Ignoring stale trajectory revision {revision}")
+                    return True
+                kept = [] if mode == "START" or trajectory_id != self.trajectory_id else [
+                    (t, p) for t, p in zip(self.traj_timestamps, self.traj_positions)
+                    if t < effective]
+                if self.name == "AZ":
+                    reference = kept[-1][1] if kept else pairs[0][1]
+                    unwrapped = []
+                    for timestamp, position in pairs:
+                        while position - reference > 180.0:
+                            position -= 360.0
+                        while position - reference < -180.0:
+                            position += 360.0
+                        unwrapped.append((timestamp, position))
+                        reference = position
+                    pairs = unwrapped
+                merged = kept + [(t, p) for t, p in pairs if t >= effective]
+                merged = [(t, p) for t, p in merged if t >= time.time() - 2.0]
+                self.traj_timestamps = [t for t, _ in merged]
+                self.traj_positions = [p for _, p in merged]
+                self.trajectory_id = trajectory_id
+                self.trajectory_revision = revision
+                self.trajectory_starved = False
+                with open(self.traj_file, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['timestamp', 'position'])
+                    writer.writerows(merged)
+            return True
+        except (TypeError, ValueError, OSError) as exc:
+            log(self.name, f"Error updating trajectory: {exc}")
+            return False
+
     def log_current_state_to_disk(self, timestamp, position):
         """Persist status to CSV (Distinct from network send_status)."""
         try:
@@ -203,42 +229,31 @@ class SubsystemBase:
         except Exception:
             pass 
 
-    def get_interpolated_target(self, query_time):
-        """Reads trajectory CSV and returns the target position for Time T."""
-        try:
-            with self.data_lock:
-                # Note: In high-performance scenarios, cache the DataFrame in memory
-                if not os.path.exists(self.traj_file): return None
-                df = pd.read_csv(self.traj_file)
-            
-            times = df['timestamp'].values
-            if len(times) == 0: return None
-            
-            # Binary search
-            idx = np.searchsorted(times, query_time)
-            
-            # Boundary checks
-            if idx == 0: return df.iloc[0]['position']
-            if idx >= len(times): return df.iloc[-1]['position']
-            
-            # Linear Interpolation
-            t1, t2 = times[idx-1], times[idx]
-            p1, p2 = df.iloc[idx-1]['position'], df.iloc[idx]['position']
-            
-            if t2 - t1 == 0: return p1
-            
-            fraction = (query_time - t1) / (t2 - t1)
-            target = p1 + (p2 - p1) * fraction
-            return target
-            
-        except Exception:
+    def get_rolling_target(self, query_time):
+        """Return an interpolated in-memory target, holding safely on starvation."""
+        with self.data_lock:
+            times = tuple(self.traj_timestamps)
+            positions = tuple(self.traj_positions)
+        if not times:
             return None
+        idx = bisect.bisect_left(times, query_time)
+        if idx == 0:
+            return positions[0]
+        if idx >= len(times):
+            if query_time - times[-1] > 1.0 and not self.trajectory_starved:
+                self.trajectory_starved = True
+                log(self.name, "Trajectory buffer starved; holding final safe target")
+            return positions[-1]
+        t1, t2 = times[idx - 1], times[idx]
+        p1, p2 = positions[idx - 1], positions[idx]
+        return p1 if t2 == t1 else p1 + (p2 - p1) * (query_time - t1) / (t2 - t1)
 
     # ---------- Background loops ----------
 
     def heartbeat_loop(self):
         while self.running:
             self.send_heartbeat()
+            self.send_status(trajectory_starved=self.trajectory_starved)
             time.sleep(1.0)
 
     # ---------- To be overridden ----------
@@ -259,23 +274,22 @@ class SubsystemBase:
     # ---------- Main loop ----------
 
     def run(self):
-        log(self.name, f"{self.__class__.__name__} starting, listening for commands on {CMD_ENDPOINT}")
+        log(self.name, f"{self.__class__.__name__} starting, listening for commands")
 
         hb_thread = threading.Thread(target=self.heartbeat_loop, daemon=True)
         hb_thread.start()
 
         while self.running:
             try:
-                topic = self.cmd_sub.recv_string()
-                body_str = self.cmd_sub.recv_string()
+                message = self.comms.receive_command(timeout_ms=1000)
             except KeyboardInterrupt:
                 break
 
-            try:
-                msg = json.loads(body_str)
-            except json.JSONDecodeError:
-                log(self.name, f"Invalid JSON from TCS: {body_str}")
+            if message is None:
                 continue
+
+            topic = message.topic
+            msg = message.body
 
             log(self.name, f"RECV on {topic}: {msg}")
 
@@ -283,7 +297,6 @@ class SubsystemBase:
                 log(self.name, "Ignoring non-CMD message")
                 continue
 
-            # delegate to subclass
             self.handle_command(msg)
 
         self.running = False

@@ -1,0 +1,34 @@
+comms:
+  backend: zmq          # valid values: zmq, cil
+  timeout_ms: 5000
+
+network:
+  tcs_ip: "127.0.0.1"
+  scc_ip: "127.0.0.1"
+
+zmq:
+  cmd_port: 5555
+  result_port: 5556
+  heartbeat_port: 5557
+  scc_to_tcs_port: 5558
+  status_port: 5559
+
+cil:
+  mode: bridge_process
+
+  bridge_host: "127.0.0.1"
+  bridge_port: 9000
+
+  cil_map: "../Cil.map"
+
+  local_name: "SIM"
+  local_id: 112
+
+  destination_name: "TES"
+  destination_id: 122
+
+  broker_name: "TMB"
+  broker_id: 123
+
+  timeout_ms: 5000
+  dynamic: false

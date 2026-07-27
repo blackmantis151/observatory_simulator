@@ -1,22 +1,53 @@
-import time
-from datetime import datetime
+from dataclasses import dataclass
+from config_loader import load_config
 
-# For the stimulator we use localhost everywhere
-TCS_IP = "127.0.0.1"
-SCC_IP = "127.0.0.1"
 
-# ZeroMQ endpoints (buses)
-CMD_ENDPOINT        = f"tcp://{TCS_IP}:5555"   # TCS -> subsystems (CMD)
-RESULT_ENDPOINT     = f"tcp://{TCS_IP}:5556"   # subsystems -> TCS (ACK/COMPLETED/ERROR)
-HEARTBEAT_ENDPOINT  = f"tcp://{SCC_IP}:5557"   # subsystems -> SCC (HEARTBEAT)
-SCC_TO_TCS_ENDPOINT = f"tcp://{SCC_IP}:5558"   # SCC -> TCS (TELESCOPESUMMARY)
-STATUS_ENDPOINT     = f"tcp://{TCS_IP}:5559"   # subsystems -> TCS (STATUS telemetry)
-# TCS -> SCC bus (5560) can be added later if needed.
+@dataclass(frozen=True)
+class BusConfig:
+    backend: str
+    timeout_ms: int
 
-def now_ts() -> int:
-    """Return current time as Unix timestamp (seconds)."""
-    return int(time.time())
+    tcs_ip: str
+    scc_ip: str
 
-def log(role: str, msg: str) -> None:
-    """Simple timestamped log."""
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] [{role}] {msg}", flush=True)
+    cmd_endpoint: str
+    result_endpoint: str
+    heartbeat_endpoint: str
+    scc_to_tcs_endpoint: str
+    status_endpoint: str
+
+    cil: dict
+
+
+def build_bus_config(config_path: str | None = None) -> BusConfig:
+    """
+    Build all runtime communication endpoints from YAML.
+
+    This file should not contain hard-coded site-specific ports/IPs.
+    Hard-coded defaults here are only safety fallbacks matching the old simulator.
+    """
+
+    config = load_config(config_path)
+
+    backend = config["comms"]["backend"]
+    timeout_ms = int(config["comms"].get("timeout_ms", 5000))
+
+    network_cfg = config["network"]
+    zmq_cfg = config.get("zmq", {})
+    cil_cfg = config.get("cil", {})
+
+    tcs_ip = network_cfg["tcs_ip"]
+    scc_ip = network_cfg["scc_ip"]
+
+    return BusConfig(
+        backend=backend,
+        timeout_ms=timeout_ms,
+        tcs_ip=tcs_ip,
+        scc_ip=scc_ip,
+        cmd_endpoint=f"tcp://{tcs_ip}:{int(zmq_cfg.get('cmd_port', 5555))}",
+        result_endpoint=f"tcp://{tcs_ip}:{int(zmq_cfg.get('result_port', 5556))}",
+        heartbeat_endpoint=f"tcp://{scc_ip}:{int(zmq_cfg.get('heartbeat_port', 5557))}",
+        scc_to_tcs_endpoint=f"tcp://{scc_ip}:{int(zmq_cfg.get('scc_to_tcs_port', 5558))}",
+        status_endpoint=f"tcp://{tcs_ip}:{int(zmq_cfg.get('status_port', 5559))}",
+        cil=cil_cfg,
+    )

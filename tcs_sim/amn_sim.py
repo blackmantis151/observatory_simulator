@@ -3,7 +3,7 @@ import time
 import threading
 
 from subsystem_base import SubsystemBase
-from bus_config import log
+from utils import log
 
 
 class AMNSubsystem(SubsystemBase):
@@ -12,8 +12,8 @@ class AMNSubsystem(SubsystemBase):
     Controls: FOCUS, DFOCUS, MIRROR_COVER, MOVE_FOLD
     """
 
-    def __init__(self):
-        super().__init__("AMN")
+    def __init__(self, comms):
+        super().__init__("AMN", comms)
 
         self.focus_pos_mm = 0.0
         self.mirror_cover = "CLOSE"

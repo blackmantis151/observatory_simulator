@@ -1,0 +1,10 @@
+[project]
+name = "observatory-stimulator"
+version = "0.1.0"
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pyyaml>=6.0.2",
+    "pyzmq",
+]

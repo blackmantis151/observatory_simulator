@@ -3,7 +3,9 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
-from bus_config import log
+from utils import log
+from bus_config import build_bus_config
+from comms.factory import create_comms_backend
 from alt_sim import ALTSubsystem
 from az_sim import AZSubsystem
 from cas_sim import CASSubsystem
@@ -97,19 +99,30 @@ def live_sky_plot(alt_obj, az_obj):
 if __name__ == "__main__":
     log("MAIN", "Starting Simulators...")
 
-    # 1. Initialize Subsystems (Physics threads start automatically in __init__)
-    alt = ALTSubsystem()
-    az  = AZSubsystem()
-    cas = CASSubsystem()
-    scc = SCCSimulator()
-    amn = AMNSubsystem()
-    enc = ENCSubsystem()
+    bus_config = build_bus_config()
+    comms_backends = []
 
-    # 2. Start ZMQ Listener Threads
-    # Note: Physics loops are already running in background from __init__
+    def make_comms(owner: str, role: str):
+        backend = create_comms_backend(bus_config, owner=owner, role=role)
+        backend.start()
+        comms_backends.append(backend)
+        return backend
+
+    # 1. Initialize Subsystems.
+    # Each component gets its own comms backend instance.
+    alt = ALTSubsystem(make_comms("ALT", "subsystem"))
+    az = AZSubsystem(make_comms("AZ", "subsystem"))
+    cas = CASSubsystem(make_comms("CAS", "subsystem"))
+    amn = AMNSubsystem(make_comms("AMN", "subsystem"))
+    enc = ENCSubsystem(make_comms("ENC", "subsystem"))
+
+    # SCC has a different communication role.
+    scc = SCCSimulator(make_comms("SCC", "scc"))
+
+    # 2. Start listener threads.
     threads = [
         threading.Thread(target=alt.run, daemon=True),
-        threading.Thread(target=az.run,  daemon=True),
+        threading.Thread(target=az.run, daemon=True),
         threading.Thread(target=cas.run, daemon=True),
         threading.Thread(target=scc.run, daemon=True),
         threading.Thread(target=amn.run, daemon=True),
@@ -119,10 +132,12 @@ if __name__ == "__main__":
     for t in threads:
         t.start()
 
-    log("MAIN", "All Systems GO. Launching GUI...")
-    
-    # 3. Run Plot on Main Thread (Matplotlib requires this)
+    log("MAIN", f"All Systems GO using backend={bus_config.backend}. Launching GUI...")
+
     try:
         live_sky_plot(alt, az)
     except KeyboardInterrupt:
         log("MAIN", "Shutting down...")
+    finally:
+        for backend in comms_backends:
+            backend.stop()
