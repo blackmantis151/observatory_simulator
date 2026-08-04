@@ -16,11 +16,13 @@ import os
 
 import pandas as pd
 
-from utils import now_ts, log
+from utils import LOG_DIR, now_ts, log
 from comms.message import SimMessage
 
 # CSV log path
-LOG_CSV = Path(os.environ.get("OBS_SIM_SCC_LOG", "./scc_log.csv")).expanduser()
+LOG_CSV = Path(
+    os.environ.get("OBS_SIM_SCC_LOG", LOG_DIR / "scc_log.csv")
+).expanduser()
 
 
 class SCCSimulator:
@@ -43,7 +45,7 @@ class SCCSimulator:
     def _init_csv(self):
         """Create CSV with header if it does not exist."""
         LOG_CSV.parent.mkdir(parents=True, exist_ok=True)
-        if not os.path.exists(LOG_CSV):
+        if not LOG_CSV.is_file() or LOG_CSV.stat().st_size == 0:
             df = pd.DataFrame(
                 columns=["timestamp", "ALT", "AZ", "CAS", "overall"]
             )

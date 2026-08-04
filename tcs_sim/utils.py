@@ -1,5 +1,10 @@
+import os
 import time
 from datetime import datetime
+from pathlib import Path
+
+
+LOG_DIR = Path(os.environ.get("OBS_SIM_LOG_DIR", Path(__file__).resolve().parent / "logs")).expanduser()
 
 
 def now_ts() -> int:

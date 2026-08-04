@@ -50,3 +50,13 @@ python3 -m unittest discover -s tests -v
 python3 -m compileall -q tcs_sim
 make -C tcs_sim/Cil clean all
 ```
+
+Runtime CSV files are stored under `tcs_sim/logs/` regardless of the launch
+directory. To place all logs elsewhere without editing the source:
+
+```sh
+OBS_SIM_LOG_DIR=/writable/log/directory python3 run_all.py
+```
+
+
+Set `OBS_SIM_SCC_LOG` only when the SCC CSV needs a separate file path.

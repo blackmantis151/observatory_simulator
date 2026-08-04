@@ -1,9 +1,10 @@
 import time
 import threading
 import bisect
+from pathlib import Path
 import csv
 import os
-from utils import now_ts, log
+from utils import LOG_DIR, now_ts, log
 from comms.message import SimMessage
 
 
@@ -21,15 +22,17 @@ class SubsystemBase:
       - handle_command(self, msg: dict)
     """
 
-    def __init__(self, name: str, comms):
+    def __init__(self, name: str, comms, log_dir=None):
         self.name = name.upper()
         self.comms = comms
         self.running = True
         self.disturbance = None
         
         # --- NEW: File Paths & Thread Safety ---
-        self.traj_file = f"trajectory_{self.name.lower()}.csv"
-        self.status_file = f"status_{self.name.lower()}.csv"
+        self.log_dir = LOG_DIR if log_dir is None else Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.traj_file = self.log_dir / f"trajectory_{self.name.lower()}.csv"
+        self.status_file = self.log_dir / f"status_{self.name.lower()}.csv"
         self.data_lock = threading.Lock()
         self.traj_timestamps = []
         self.traj_positions = []
