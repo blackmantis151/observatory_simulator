@@ -11,6 +11,7 @@
 
 import time
 import threading
+from pathlib import Path
 import os
 
 import pandas as pd
@@ -19,7 +20,7 @@ from utils import now_ts, log
 from comms.message import SimMessage
 
 # CSV log path
-LOG_CSV = "/home/harshit/Observatory_Stimulator/Observatory_Stimulator/tcs_sim/scc_log.csv"
+LOG_CSV = Path(os.environ.get("OBS_SIM_SCC_LOG", "./scc_log.csv")).expanduser()
 
 
 class SCCSimulator:
@@ -41,6 +42,7 @@ class SCCSimulator:
 
     def _init_csv(self):
         """Create CSV with header if it does not exist."""
+        LOG_CSV.parent.mkdir(parents=True, exist_ok=True)
         if not os.path.exists(LOG_CSV):
             df = pd.DataFrame(
                 columns=["timestamp", "ALT", "AZ", "CAS", "overall"]

@@ -18,9 +18,11 @@ from ags_sim import AGSSubsystem
 from disturbance import TrackingDisturbance
 
 def live_sky_plot(alt_obj, az_obj, ags_obj):
-    fig = plt.figure(figsize=(12, 6))
-    ax = fig.add_subplot(1, 2, 1, projection='polar')
-    camera_ax = fig.add_subplot(1, 2, 2)
+    fig = plt.figure(figsize=(14, 10))
+    grid = fig.add_gridspec(2, 2, height_ratios=[1.0, 1.15], hspace=0.35, wspace=0.25)
+    ax = fig.add_subplot(grid[0, 0], projection='polar')
+    camera_ax = fig.add_subplot(grid[0, 1])
+    history_ax = fig.add_subplot(grid[1, :], projection='3d')
     
     # --- 1. Setup Standard Sky Chart Orientation ---
     ax.set_theta_zero_location('N')      # 0° azimuth (North) at Top
@@ -44,10 +46,26 @@ def live_sky_plot(alt_obj, az_obj, ags_obj):
     target_point, = ax.plot([], [], 'g*', markersize=12, label='Target Pos')
     
     ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+    history_ax.set_title("Telescope Trajectory and Achieved Position")
+    history_ax.set_xlabel("Elapsed time (s)")
+    history_ax.set_ylabel("Altitude (deg)")
+    history_ax.set_zlabel("Azimuth (deg, unwrapped)")
+    trajectory_history, = history_ax.plot(
+        [], [], [], "g--", linewidth=1.5, label="Demanded trajectory"
+    )
+    achieved_history, = history_ax.plot(
+        [], [], [], "r-", linewidth=1.2, label="Disturbed achieved position"
+    )
+    history_ax.legend(loc="upper left")
+
     camera_image = camera_ax.imshow(
         np.zeros((ags_obj.window, ags_obj.window)), cmap="gray", origin="lower"
     )
-    button = Button(fig.add_axes([0.82, 0.02, 0.14, 0.05]), "Save Snapshot")
+    camera_waiting = camera_ax.text(
+        0.5, 0.5, "Waiting for guide acquisition", ha="center", va="center",
+        color="white", transform=camera_ax.transAxes,
+    )
+    button = Button(fig.add_axes([0.81, 0.505, 0.14, 0.035]), "Save Snapshot")
 
     def save_snapshot(_event):
         with ags_obj.frame_lock:
@@ -61,6 +79,7 @@ def live_sky_plot(alt_obj, az_obj, ags_obj):
         log("AGS", f"Saved snapshot {filename}")
 
     centroid_point, = camera_ax.plot([], [], "r+", markersize=12)
+    centroid_point.set_visible(False)
     camera_ax.set_title("Autoguider: OFF")
     button.on_clicked(save_snapshot)
 
@@ -68,6 +87,12 @@ def live_sky_plot(alt_obj, az_obj, ags_obj):
     # Data buffers for the trail
     theta_list = []
     r_list = []
+    history_time = []
+    achieved_alt = []
+    achieved_az = []
+    demanded_alt = []
+    demanded_az = []
+    plot_started = time.monotonic()
 
     plt.ion()
     plt.show()
@@ -84,6 +109,12 @@ def live_sky_plot(alt_obj, az_obj, ags_obj):
             # Target Position (The command/trajectory)
             targ_alt = alt_obj.target_pos_deg
             targ_az  = az_obj.target_pos_deg
+            elapsed = time.monotonic() - plot_started
+            history_time.append(elapsed)
+            achieved_alt.append(curr_alt)
+            achieved_az.append(curr_az)
+            demanded_alt.append(targ_alt)
+            demanded_az.append(targ_az)
 
             # --- 4. Convert to Polar Coordinates ---
             # r = 90 - Altitude (So 90 becomes 0 at center)
@@ -106,6 +137,7 @@ def live_sky_plot(alt_obj, az_obj, ags_obj):
                 frame = None if ags_obj.latest_frame is None else ags_obj.latest_frame.copy()
                 guide = dict(ags_obj.latest)
             if frame is not None:
+                camera_waiting.set_visible(False)
                 camera_image.set_data(frame)
                 camera_image.set_clim(
                     float(np.percentile(frame, 5)),
@@ -113,10 +145,14 @@ def live_sky_plot(alt_obj, az_obj, ags_obj):
                 )
                 x0 = guide.get("window_tlx", 0)
                 y0 = guide.get("window_tly", 0)
+                centroid_point.set_visible(guide.get("guide_status") != "F")
                 centroid_point.set_data(
                     [guide.get("centroid_x", 0) - x0],
                     [guide.get("centroid_y", 0) - y0],
                 )
+            else:
+                camera_waiting.set_visible(True)
+                centroid_point.set_visible(False)
             camera_ax.set_title(
                 f"Autoguider: {ags_obj.mode}  focus={ags_obj.focus_mm:.2f} mm\n"
                 f"FWHM={guide.get('fwhm', 0):.2f} px  "
@@ -127,6 +163,13 @@ def live_sky_plot(alt_obj, az_obj, ags_obj):
             trail.set_data(theta_list, r_list)
             current_point.set_data([theta_curr], [r_curr])
             target_point.set_data([theta_targ], [r_targ])
+            trajectory_history.set_data_3d(history_time, demanded_alt, demanded_az)
+            achieved_history.set_data_3d(history_time, achieved_alt, achieved_az)
+            history_ax.set_xlim(0.0, max(1.0, elapsed))
+            all_alt = demanded_alt + achieved_alt
+            all_az = demanded_az + achieved_az
+            history_ax.set_ylim(min(all_alt) - 1.0, max(all_alt) + 1.0)
+            history_ax.set_zlim(min(all_az) - 1.0, max(all_az) + 1.0)
 
             fig.canvas.draw_idle()
             fig.canvas.flush_events()
