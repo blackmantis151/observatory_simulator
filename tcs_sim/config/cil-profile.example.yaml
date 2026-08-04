@@ -1,0 +1,35 @@
+# Merge these keys into one endpoint after transcribing values from its
+# official ICD/header. Values below demonstrate the schema only and are not a
+# telescope wire contract.
+identities:
+  - name: ELC
+    services:
+      "0x00000000":
+        command: ALTITUDE
+        request_fields:
+          - {name: angle, type: f64}
+        responses:
+          ACK:
+            class: 4
+            fields: []
+          COMPLETED:
+            class: 5
+            fields:
+              - {name: achieved, source: current_pos_deg, type: f64}
+          ERROR:
+            class: 6
+            fields:
+              - name: status
+                source: error_code
+                type: i32
+                enum: {BADPARAM: 0, BADRANGE: 0}
+outputs:
+  status:
+    identity: ELC
+    destination: SDB
+    send_to: SDB
+    class: 1
+    service: "0x00000000"
+    fields:
+      - {name: demand, source: target_pos_deg, type: f64}
+      - {name: achieved, source: current_pos_deg, type: f64}

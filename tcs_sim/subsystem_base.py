@@ -25,6 +25,7 @@ class SubsystemBase:
         self.name = name.upper()
         self.comms = comms
         self.running = True
+        self.disturbance = None
         
         # --- NEW: File Paths & Thread Safety ---
         self.traj_file = f"trajectory_{self.name.lower()}.csv"
@@ -52,6 +53,9 @@ class SubsystemBase:
             "msg_type": msg_type,
             "source": self.name,
             "timestamp": now_ts(),
+            "state": self.state,
+            "current_pos_deg": self.reported_pos_deg(),
+            "target_pos_deg": self.target_pos_deg,
         }
 
         if cmd_id is not None:
@@ -69,7 +73,7 @@ class SubsystemBase:
             "source": self.name,
             "timestamp": time.time(),
             "state": self.state,
-            "current_pos_deg": self.current_pos_deg,
+            "current_pos_deg": self.reported_pos_deg(),
             "target_pos_deg": self.target_pos_deg,
         }
 
@@ -88,10 +92,23 @@ class SubsystemBase:
             "source": self.name,
             "timestamp": now_ts(),
             "state": self.state,
-            "current_pos_deg": self.current_pos_deg,
+            "current_pos_deg": self.reported_pos_deg(),
         }
 
         self.comms.send_heartbeat(SimMessage(topic=topic, body=body))
+
+    def reported_pos_deg(self):
+        if self.disturbance is None or self.name not in {"ALT", "AZ"}:
+            return self.current_pos_deg
+        tracking = bool(getattr(self, "tracking_active", False))
+        x_arcsec, y_arcsec = self.disturbance.sample(tracking)
+        altitude = self.current_pos_deg if self.name == "ALT" else 45.0
+        alt_offset, az_offset = self.disturbance.axis_offsets(
+            x_arcsec, y_arcsec, altitude
+        )
+        return self.current_pos_deg + (
+            alt_offset if self.name == "ALT" else az_offset
+        )
         
         
         

@@ -17,6 +17,7 @@ class BusConfig:
     status_endpoint: str
 
     cil: dict
+    autoguider: dict
 
 
 def build_bus_config(config_path: str | None = None) -> BusConfig:
@@ -32,12 +33,12 @@ def build_bus_config(config_path: str | None = None) -> BusConfig:
     backend = config["comms"]["backend"]
     timeout_ms = int(config["comms"].get("timeout_ms", 5000))
 
-    network_cfg = config["network"]
+    network_cfg = config.get("network", {})
     zmq_cfg = config.get("zmq", {})
     cil_cfg = config.get("cil", {})
 
-    tcs_ip = network_cfg["tcs_ip"]
-    scc_ip = network_cfg["scc_ip"]
+    tcs_ip = network_cfg.get("tcs_ip", "")
+    scc_ip = network_cfg.get("scc_ip", "")
 
     return BusConfig(
         backend=backend,
@@ -50,4 +51,5 @@ def build_bus_config(config_path: str | None = None) -> BusConfig:
         scc_to_tcs_endpoint=f"tcp://{scc_ip}:{int(zmq_cfg.get('scc_to_tcs_port', 5558))}",
         status_endpoint=f"tcp://{tcs_ip}:{int(zmq_cfg.get('status_port', 5559))}",
         cil=cil_cfg,
+        autoguider=config.get("autoguider", {}),
     )

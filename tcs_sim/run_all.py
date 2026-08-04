@@ -1,6 +1,8 @@
+from pathlib import Path
 import threading
 import time
 import matplotlib.pyplot as plt
+from matplotlib.widgets import Button
 import numpy as np
 
 from utils import log
@@ -12,9 +14,13 @@ from cas_sim import CASSubsystem
 from scc_sim import SCCSimulator
 from amn_sim import AMNSubsystem
 from enc_sim import ENCSubsystem
+from ags_sim import AGSSubsystem
+from disturbance import TrackingDisturbance
 
-def live_sky_plot(alt_obj, az_obj):
-    fig, ax = plt.subplots(subplot_kw={'projection': 'polar'}, figsize=(6, 6))
+def live_sky_plot(alt_obj, az_obj, ags_obj):
+    fig = plt.figure(figsize=(12, 6))
+    ax = fig.add_subplot(1, 2, 1, projection='polar')
+    camera_ax = fig.add_subplot(1, 2, 2)
     
     # --- 1. Setup Standard Sky Chart Orientation ---
     ax.set_theta_zero_location('N')      # 0° azimuth (North) at Top
@@ -38,6 +44,26 @@ def live_sky_plot(alt_obj, az_obj):
     target_point, = ax.plot([], [], 'g*', markersize=12, label='Target Pos')
     
     ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+    camera_image = camera_ax.imshow(
+        np.zeros((ags_obj.window, ags_obj.window)), cmap="gray", origin="lower"
+    )
+    button = Button(fig.add_axes([0.82, 0.02, 0.14, 0.05]), "Save Snapshot")
+
+    def save_snapshot(_event):
+        with ags_obj.frame_lock:
+            frame = None if ags_obj.latest_frame is None else ags_obj.latest_frame.copy()
+        if frame is None:
+            return
+        directory = Path(ags_obj.cfg.get("snapshots_dir", "autoguider_snapshots"))
+        directory.mkdir(parents=True, exist_ok=True)
+        filename = directory / f"guide_{time.strftime('%Y%m%d_%H%M%S')}.png"
+        plt.imsave(filename, frame, cmap="gray")
+        log("AGS", f"Saved snapshot {filename}")
+
+    centroid_point, = camera_ax.plot([], [], "r+", markersize=12)
+    camera_ax.set_title("Autoguider: OFF")
+    button.on_clicked(save_snapshot)
+
 
     # Data buffers for the trail
     theta_list = []
@@ -52,8 +78,8 @@ def live_sky_plot(alt_obj, az_obj):
         try:
             # --- 3. Read Data (Thread-Safe enough for plotting) ---
             # Actual Position
-            curr_alt = alt_obj.current_pos_deg
-            curr_az  = az_obj.current_pos_deg
+            curr_alt = alt_obj.reported_pos_deg()
+            curr_az  = az_obj.reported_pos_deg()
             
             # Target Position (The command/trajectory)
             targ_alt = alt_obj.target_pos_deg
@@ -76,6 +102,26 @@ def live_sky_plot(alt_obj, az_obj):
                 if len(theta_list) > 100:
                     theta_list.pop(0)
                     r_list.pop(0)
+            with ags_obj.frame_lock:
+                frame = None if ags_obj.latest_frame is None else ags_obj.latest_frame.copy()
+                guide = dict(ags_obj.latest)
+            if frame is not None:
+                camera_image.set_data(frame)
+                camera_image.set_clim(
+                    float(np.percentile(frame, 5)),
+                    float(np.percentile(frame, 99.5)),
+                )
+                x0 = guide.get("window_tlx", 0)
+                y0 = guide.get("window_tly", 0)
+                centroid_point.set_data(
+                    [guide.get("centroid_x", 0) - x0],
+                    [guide.get("centroid_y", 0) - y0],
+                )
+            camera_ax.set_title(
+                f"Autoguider: {ags_obj.mode}  focus={ags_obj.focus_mm:.2f} mm\n"
+                f"FWHM={guide.get('fwhm', 0):.2f} px  "
+                f"status={guide.get('guide_status', 'F')}"
+            )
 
             # --- 6. Draw ---
             trail.set_data(theta_list, r_list)
@@ -100,6 +146,7 @@ if __name__ == "__main__":
     log("MAIN", "Starting Simulators...")
 
     bus_config = build_bus_config()
+    disturbance = TrackingDisturbance(bus_config.autoguider.get("disturbance"))
     comms_backends = []
 
     def make_comms(owner: str, role: str):
@@ -115,6 +162,14 @@ if __name__ == "__main__":
     cas = CASSubsystem(make_comms("CAS", "subsystem"))
     amn = AMNSubsystem(make_comms("AMN", "subsystem"))
     enc = ENCSubsystem(make_comms("ENC", "subsystem"))
+    alt.disturbance = disturbance
+    az.disturbance = disturbance
+    ags = AGSSubsystem(
+        make_comms("AGS", "subsystem"),
+        bus_config.autoguider,
+        alt, az, disturbance,
+    )
+
 
     # SCC has a different communication role.
     scc = SCCSimulator(make_comms("SCC", "scc"))
@@ -127,6 +182,7 @@ if __name__ == "__main__":
         threading.Thread(target=scc.run, daemon=True),
         threading.Thread(target=amn.run, daemon=True),
         threading.Thread(target=enc.run, daemon=True),
+        threading.Thread(target=ags.run, daemon=True),
     ]
 
     for t in threads:
@@ -135,9 +191,10 @@ if __name__ == "__main__":
     log("MAIN", f"All Systems GO using backend={bus_config.backend}. Launching GUI...")
 
     try:
-        live_sky_plot(alt, az)
+        live_sky_plot(alt, az, ags)
     except KeyboardInterrupt:
         log("MAIN", "Shutting down...")
     finally:
+        ags.stop()
         for backend in comms_backends:
             backend.stop()

@@ -1,0 +1,72 @@
+# Merge under cil.endpoints.AGS when the main CIL mechanism profiles are ready.
+identities:
+  - name: AGS
+    services:
+      "0x004f0000":
+        command_field: command
+        request_fields:
+          - {name: command, type: i32}
+          - {name: request_status, type: i32}
+          - {name: param1, type: i32}
+          - {name: param2, type: i32}
+        commands:
+          "1": &brightest
+            command: GUIDE_ON_BRIGHTEST
+            responses: &responses
+              COMPLETED:
+                class: 2
+                fields: &reply
+                  - {name: command, type: i32}
+                  - {name: status, type: i32}
+                  - {name: param1, type: i32}
+                  - {name: param2, type: i32}
+              ERROR:
+                class: 2
+                fields: *reply
+          "2": {command: GUIDE_ON_RANK, responses: *responses}
+          "3": {command: GUIDE_ON_RANGE, responses: *responses}
+          "4": {command: GUIDE_ON_PIXEL, responses: *responses}
+          "5": {command: GUIDE_OFF, responses: *responses}
+          "10": {command: START_SESSION, responses: *responses}
+          "11": {command: END_SESSION, responses: *responses}
+      "0x000000fc":
+        command: ACTIVATE
+        request_fields: []
+        responses:
+          ACK: &mcp_ack
+            class: 4
+            fields: []
+          COMPLETED: &mcp_complete
+            class: 5
+            fields:
+              - {name: status, source: mcp_state, type: i32}
+      "0x000000fd":
+        command: SAFESTATE
+        request_fields: []
+        responses:
+          ACK: *mcp_ack
+          COMPLETED: *mcp_complete
+      "0x000000fe":
+        command: SHUTDOWN
+        request_fields: []
+        responses:
+          ACK: *mcp_ack
+          COMPLETED: *mcp_complete
+      "0x000000ff":
+        kind: heartbeat
+        request_fields: []
+        response_fields:
+          - {name: status, type: i32, const: 1}
+outputs:
+  status:
+    identity: AGS
+    destination: SDB
+    send_to: SDB
+    class: 1
+    service: "0x000d000c"
+    fields:
+      - {name: session_active, type: i32}
+      - {name: guiding, type: i32}
+      - {name: centroid_x, type: f64}
+      - {name: centroid_y, type: f64}
+      - {name: fwhm, type: f64}
