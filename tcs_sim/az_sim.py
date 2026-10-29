@@ -25,8 +25,8 @@ class AZSubsystem(SubsystemBase):
       2. New Trajectory Tracking (GOTO command)
     """
 
-    def __init__(self, comms):
-        super().__init__("AZ", comms)
+    def __init__(self, comms, log_dir=None):
+        super().__init__("AZ", comms, log_dir=log_dir)
 
         # --- Legacy State Variables ---
         self.state = "STOPPED"
@@ -236,6 +236,8 @@ class AZSubsystem(SubsystemBase):
     # EXISTING: Legacy Motion Engine (Modified for Safety)
     # ============================================================
     def _start_move(self, target_deg: float, timeout_s: float):
+        from tracking_intake import get_tracking_intake
+        get_tracking_intake().manual_takeover("manual AZ")
         # --- SAFETY: Disable Trajectory Mode ---
         self.tracking_active = False 
         self.active_cmd_id = None
@@ -387,6 +389,20 @@ class AZSubsystem(SubsystemBase):
         self.send_result("ACK", cmd_id=cmd_id)
 
     def handle_command(self, msg):
+        if "Service" in msg:
+            words = self.decode_flat_manual(msg, 34)
+            if words is None:
+                log("AZ", "Rejected malformed flat Service 9 command")
+                return
+            from tracking_intake import signed_mas_degrees
+            angle = signed_mas_degrees(words[4])
+            if angle < -180.0 or angle > 360.0 or self._reject_if_blocked():
+                log("AZ", f"Rejected flat Service 9 angle {angle:.6f}")
+                return
+            result = self._start_move(angle, timeout_s=300.0)
+            if result["status"] == "OK":
+                self.send_flat_manual_response(msg, 34)
+            return
         cmd_id = msg.get("cmd_id")
         cmd = (msg.get("command") or "").upper()
         params = msg.get("params", {}) or {}

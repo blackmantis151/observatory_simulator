@@ -19,8 +19,8 @@ class CASSubsystem(SubsystemBase):
         2. New Trajectory Tracking (GOTO command)
     """
 
-    def __init__(self, comms):
-        super().__init__("CAS", comms)
+    def __init__(self, comms, log_dir=None):
+        super().__init__("CAS", comms, log_dir=log_dir)
 
         # --- Legacy State Variables ---
         self.current_pos_deg = 0.0
@@ -165,6 +165,8 @@ class CASSubsystem(SubsystemBase):
     # EXISTING: Legacy Motion Engine
     # ============================================================
     def _start_move(self, target_deg, timeout_s):
+        from tracking_intake import get_tracking_intake
+        get_tracking_intake().manual_takeover("manual CAS")
         # Disable Trajectory
         self.tracking_active = False 
         self.active_cmd_id = None
@@ -303,6 +305,20 @@ class CASSubsystem(SubsystemBase):
         self.send_result("ACK", cmd_id=cmd_id)
 
     def handle_command(self, msg):
+        if "Service" in msg:
+            words = self.decode_flat_manual(msg, 46)
+            if words is None:
+                log("CAS", "Rejected malformed flat Service 9 command")
+                return
+            from tracking_intake import signed_mas_degrees
+            angle = signed_mas_degrees(words[4])
+            if angle < -240.0 or angle > 240.0 or self._reject_if_blocked():
+                log("CAS", f"Rejected flat Service 9 angle {angle:.6f}")
+                return
+            result = self._start_move(angle, timeout_s=120.0)
+            if result["status"] == "OK":
+                self.send_flat_manual_response(msg, 46)
+            return
         cmd_id = msg.get("cmd_id")
         cmd = (msg.get("command") or "").upper()
         params = msg.get("params", {}) or {}

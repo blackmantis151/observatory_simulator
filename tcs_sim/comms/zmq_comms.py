@@ -13,6 +13,23 @@ class ZmqComms(CommsBackend):
     Do not share one ZMQ socket object across all subsystem threads.
     """
 
+    WORD_COMMAND_TOPICS = {
+        "AMN": (
+            "FOCUS", "MIRROR_COVER", "MOVE_FOLD", "DARKSLIDE",
+            "AGFILTER", "AGFOCUS", "AGRADIAL",
+        ),
+        "ALT": ("ALTITUDE",),
+    }
+
+    @classmethod
+    def command_topics(cls, owner: str):
+        owner = owner.upper()
+        tracking = (f"tracking.{owner}", "tracking.CANCEL") if owner in {"ALT", "AZ", "CAS"} else ()
+        return (f"cmd.{owner}",) + tracking + tuple(
+            f"cmd.{command}" for command in cls.WORD_COMMAND_TOPICS.get(owner, ())
+        )
+
+
     def __init__(self, bus_config, owner: str, role: str):
         super().__init__(bus_config, owner, role)
 
@@ -39,7 +56,8 @@ class ZmqComms(CommsBackend):
     def _start_subsystem_sockets(self) -> None:
         self.cmd_sub = self.ctx.socket(zmq.SUB)
         self.cmd_sub.connect(self.bus.cmd_endpoint)
-        self.cmd_sub.setsockopt_string(zmq.SUBSCRIBE, f"cmd.{self.owner}")
+        for topic in self.command_topics(self.owner):
+            self.cmd_sub.setsockopt_string(zmq.SUBSCRIBE, topic)
 
         self.result_pub = self.ctx.socket(zmq.PUB)
         self.result_pub.connect(self.bus.result_endpoint)

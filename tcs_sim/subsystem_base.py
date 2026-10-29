@@ -22,6 +22,8 @@ class SubsystemBase:
       - handle_command(self, msg: dict)
     """
 
+    trajectory_commit_lock = threading.RLock()
+
     def __init__(self, name: str, comms, log_dir=None):
         self.name = name.upper()
         self.comms = comms
@@ -39,6 +41,8 @@ class SubsystemBase:
         self.trajectory_id = None
         self.trajectory_revision = -1
         self.trajectory_starved = False
+        self._tracking_response_lock = threading.Lock()
+        self._tracking_responses = []
 
         # --- NEW: Initialize Files & Recover State ---
         self._init_files()
@@ -47,6 +51,9 @@ class SubsystemBase:
         self.state = "IDLE"
         self.current_pos_deg = self._recover_last_position() # <--- CHANGED FROM 0.0
         self.target_pos_deg = 0.0
+        if self.name in {"ALT", "AZ", "CAS"}:
+            from tracking_intake import get_tracking_intake
+            get_tracking_intake().register(self)
 
     # ---------- Generic send helpers ----------
 
@@ -66,6 +73,70 @@ class SubsystemBase:
 
         body.update(extra)
 
+        self.comms.send_result(SimMessage(topic=topic, body=body))
+        log(self.name, f"SENT on {topic}: {body}")
+
+    def queue_tracking_response(self, body):
+        with self._tracking_response_lock:
+            self._tracking_responses.append(body)
+
+    def _drain_tracking_responses(self):
+        with self._tracking_response_lock:
+            pending, self._tracking_responses = self._tracking_responses, []
+        for body in pending:
+            self.comms.send_result(SimMessage(topic=f"result.{self.name}", body=body))
+
+    @staticmethod
+    def decode_flat_manual(msg, destination_id):
+        try:
+            if (msg.get("DestId") != destination_id or msg.get("Class") != 1 or
+                    msg.get("Service") != 9):
+                return None
+            words = [msg[f"param{i}"] for i in range(8)]
+            if any(isinstance(word, bool) or not isinstance(word, int) or
+                   not 0 <= word <= 0xFFFFFFFF for word in words):
+                return None
+            if (words[:4] != [0x002A0007, 0x00010000, 4, 0] or
+                    words[5:] != [0, 0, 0]):
+                return None
+            return words
+        except (KeyError, TypeError):
+            return None
+
+    def send_flat_manual_response(self, request, source_id):
+        body = {"SourceId": source_id, "DestId": 17, "Class": 2, "Service": 9}
+        body.update({f"param{i}": request[f"param{i}"] for i in range(8)})
+        self.comms.send_result(SimMessage(topic=f"result.{self.name}", body=body))
+
+    @staticmethod
+    def decode_command_words(msg: dict, expected_command: str, expected_word: int):
+        words = msg.get("parameters")
+        if (str(msg.get("command", "")).upper() != expected_command or
+                not isinstance(words, list) or len(words) != 8):
+            return None
+        if any(isinstance(word, bool) or not isinstance(word, int) or
+               word < -(1 << 31) or word > 0xFFFFFFFF for word in words):
+            return None
+        words = [word & 0xFFFFFFFF for word in words]
+        if (words[0] != expected_word or words[1] != 0x10000 or
+                words[2] != 4 or words[3] != 0 or
+                words[5:] != [0, 0, 0]):
+            return None
+        return words
+
+    def send_word_result(self, command: str, cmd_id, message_class: int,
+                         service: int, payload_words=None, **extra):
+        message_types = {2: "COMPLETED", 3: "ACK", 4: "ACTION",
+                         5: "IN_PROGRESS", 6: "ERROR"}
+        topic = f"result.{command}"
+        body = {
+            "msg_type": message_types.get(message_class, "ERROR"),
+            "cmd_id": str(cmd_id),
+            "class": message_class,
+            "service": service,
+            "payload_words": list(payload_words or []),
+        }
+        body.update(extra)
         self.comms.send_result(SimMessage(topic=topic, body=body))
         log(self.name, f"SENT on {topic}: {body}")
 
@@ -241,6 +312,53 @@ class SubsystemBase:
             log(self.name, f"Error updating trajectory: {exc}")
             return False
 
+    def accept_tracking_point(self, timestamp, position_deg, trajectory_id,
+                              revision, start):
+        """Memory-only Service 8 insertion; caller holds trajectory_commit_lock."""
+        with self.data_lock:
+            if not start and trajectory_id == self.trajectory_id and revision <= self.trajectory_revision:
+                return False
+            kept = [] if start or trajectory_id != self.trajectory_id else [
+                (t, p) for t, p in zip(self.traj_timestamps, self.traj_positions)
+                if t < timestamp
+            ]
+            position = float(position_deg)
+            if self.name == "AZ":
+                reference = kept[-1][1] if kept else self.current_pos_deg
+                while position - reference > 180.0:
+                    position -= 360.0
+                while position - reference < -180.0:
+                    position += 360.0
+            merged = kept + [(float(timestamp), position)]
+            merged = [(t, p) for t, p in merged if t >= time.time() - 2.0]
+            self.traj_timestamps = [t for t, _ in merged]
+            self.traj_positions = [p for _, p in merged]
+            self.trajectory_id = trajectory_id
+            self.trajectory_revision = revision
+            self.trajectory_starved = False
+        return True
+
+    def activate_tracking_set(self, trajectory_id, start):
+        self._motion_stop = True
+        self.tracking_active = True
+        self.active_cmd_id = trajectory_id
+        if start:
+            self.state = "SLEWING"
+            self.target_reached_flag = False
+
+    def clear_tracking_input(self):
+        with self.data_lock:
+            self.traj_timestamps = []
+            self.traj_positions = []
+            self.trajectory_id = None
+            self.trajectory_revision = -1
+            self.trajectory_starved = False
+        self.tracking_active = False
+        self._motion_stop = True
+        self.active_cmd_id = None
+        self.target_pos_deg = self.current_pos_deg
+        self.state = "STOPPED"
+
     def log_current_state_to_disk(self, timestamp, position):
         """Persist status to CSV (Distinct from network send_status)."""
         try:
@@ -251,9 +369,10 @@ class SubsystemBase:
 
     def get_rolling_target(self, query_time):
         """Return an interpolated in-memory target, holding safely on starvation."""
-        with self.data_lock:
-            times = tuple(self.traj_timestamps)
-            positions = tuple(self.traj_positions)
+        with self.trajectory_commit_lock:
+            with self.data_lock:
+                times = tuple(self.traj_timestamps)
+                positions = tuple(self.traj_positions)
         if not times:
             return None
         idx = bisect.bisect_left(times, query_time)
@@ -300,8 +419,9 @@ class SubsystemBase:
         hb_thread.start()
 
         while self.running:
+            self._drain_tracking_responses()
             try:
-                message = self.comms.receive_command(timeout_ms=1000)
+                message = self.comms.receive_command(timeout_ms=100)
             except KeyboardInterrupt:
                 break
 
@@ -313,10 +433,23 @@ class SubsystemBase:
 
             log(self.name, f"RECV on {topic}: {msg}")
 
+            if topic.startswith("tracking."):
+                from tracking_intake import get_tracking_intake
+                get_tracking_intake().ingest(self, topic, msg)
+                self._drain_tracking_responses()
+                continue
+
+            if "Class" in msg and "Service" in msg:
+                self.handle_command(msg)
+                continue
+
             if msg.get("msg_type") != "CMD":
                 log(self.name, "Ignoring non-CMD message")
                 continue
 
+            if str(msg.get("command", "")).upper() == "STOP":
+                from tracking_intake import get_tracking_intake
+                get_tracking_intake().manual_takeover(f"STOP {self.name}")
             self.handle_command(msg)
 
         self.running = False
