@@ -6,7 +6,7 @@ import time
 import json
 import numpy as np
 from subsystem_base import SubsystemBase
-from bus_config import log
+from utils import log
 
 # --- CONFIGURATION ---
 MAX_VEL = 2.0       # deg/s
@@ -22,8 +22,8 @@ class CASSubsystem(SubsystemBase):
         2. New Trajectory Tracking (GOTO command)
     """
 
-    def __init__(self):
-        super().__init__("CAS")
+    def __init__(self, comms, log_dir=None):
+        super().__init__("CAS", comms, log_dir=log_dir)
 
         # --- Legacy State Variables ---
         self.current_pos_deg = 0.0
@@ -71,28 +71,28 @@ class CASSubsystem(SubsystemBase):
         Handles incoming JSON trajectory packets.
         Wipes previous data to ensure a fresh start.
         """
-        # 1. PAUSE EVERYTHING
-        self.tracking_active = False
-        self._motion_stop = True
-        if self._motion_thread and self._motion_thread.is_alive():
-            self._motion_thread.join(timeout=0.2)
+        is_start = (str(params.get("mode", "START")).upper() == "START" or
+                    params.get("trajectory_id") != self.trajectory_id)
+        if is_start:
+            self.tracking_active = False
+            self._motion_stop = True
+            if self._motion_thread and self._motion_thread.is_alive():
+                self._motion_thread.join(timeout=0.2)
         
-        self.state = "SLEWING"
+        self.state = "SLEWING" if is_start else self.state
         self.send_result("ACK", cmd_id=cmd_id)
 
         timestamps = params.get('timestamp')
         positions = params.get('position')
         
         if timestamps and positions:
-            # 2. WIPE OLD DATA (Crucial Fix)
-            self.clear_trajectory_data()
+            # Merge this rolling window without interrupting tracking
 
-            # 3. LOAD NEW DATA
-            success = self.append_trajectory_data(timestamps, positions)
+            success = self.update_trajectory_data(params)
             
             if success:
-                self.active_cmd_id = cmd_id
-                self.target_reached_flag = False 
+                self.active_cmd_id = cmd_id if is_start else self.active_cmd_id
+                self.target_reached_flag = False if is_start else self.target_reached_flag 
                 
                 # 4. RESUME TRACKING
                 self.tracking_active = True 
@@ -117,7 +117,7 @@ class CASSubsystem(SubsystemBase):
             start_time = time.time()
             
             if self.tracking_active:
-                target = self.get_interpolated_target(start_time)
+                target = self.get_rolling_target(start_time)
                 
                 if target is not None:
                     self.target_pos_deg = target
@@ -168,6 +168,8 @@ class CASSubsystem(SubsystemBase):
     # EXISTING: Legacy Motion Engine
     # ============================================================
     def _start_move(self, target_deg, timeout_s):
+        from tracking_intake import get_tracking_intake
+        get_tracking_intake().manual_takeover("manual CAS")
         # Disable Trajectory
         self.tracking_active = False 
         self.active_cmd_id = None
@@ -306,6 +308,20 @@ class CASSubsystem(SubsystemBase):
         self.send_result("ACK", cmd_id=cmd_id)
 
     def handle_command(self, msg):
+        if "Service" in msg:
+            words = self.decode_flat_manual(msg, 46)
+            if words is None:
+                log("CAS", "Rejected malformed flat Service 9 command")
+                return
+            from tracking_intake import signed_mas_degrees
+            angle = signed_mas_degrees(words[4])
+            if angle < -240.0 or angle > 240.0 or self._reject_if_blocked():
+                log("CAS", f"Rejected flat Service 9 angle {angle:.6f}")
+                return
+            result = self._start_move(angle, timeout_s=120.0)
+            if result["status"] == "OK":
+                self.send_flat_manual_response(msg, 46)
+            return
         cmd_id = msg.get("cmd_id")
         cmd = (msg.get("command") or "").upper()
         params = msg.get("params", {}) or {}
@@ -317,5 +333,15 @@ class CASSubsystem(SubsystemBase):
         f(cmd_id, params)
 
 if __name__ == "__main__":
-    sys = CASSubsystem()
-    sys.run()
+    from bus_config import build_bus_config
+    from comms.factory import create_comms_backend
+
+    bus_config = build_bus_config()
+    comms = create_comms_backend(bus_config, owner="CAS", role="subsystem")
+    comms.start()
+
+    try:
+        sys = CASSubsystem(comms)
+        sys.run()
+    finally:
+        comms.stop()

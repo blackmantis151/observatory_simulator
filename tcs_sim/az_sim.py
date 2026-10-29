@@ -7,7 +7,7 @@ import json
 import numpy as np
 
 from subsystem_base import SubsystemBase
-from bus_config import log
+from utils import log
 
 # --- CONFIGURATION ---
 MAX_VEL = 2.0       # deg/s
@@ -28,8 +28,8 @@ class AZSubsystem(SubsystemBase):
       2. New Trajectory Tracking (GOTO command)
     """
 
-    def __init__(self):
-        super().__init__("AZ")
+    def __init__(self, comms, log_dir=None):
+        super().__init__("AZ", comms, log_dir=log_dir)
 
         # --- Legacy State Variables ---
         self.state = "STOPPED"
@@ -86,32 +86,32 @@ class AZSubsystem(SubsystemBase):
         3. LOAD new trajectory data
         4. RESUME tracking mode     
         """
-        # 1. PAUSE EVERYTHING
-        self.tracking_active = False   # <--- STOP Physics reading
-        self._motion_stop = True       # <--- STOP Legacy motion
-        if self._motion_thread and self._motion_thread.is_alive():
-            self._motion_thread.join(timeout=0.2)
+        is_start = (str(params.get("mode", "START")).upper() == "START" or
+                    params.get("trajectory_id") != self.trajectory_id)
+        if is_start:
+            self.tracking_active = False
+            self._motion_stop = True
+            if self._motion_thread and self._motion_thread.is_alive():
+                self._motion_thread.join(timeout=0.2)
         
-        self.state = "SLEWING"
+        self.state = "SLEWING" if is_start else self.state
         self.send_result("ACK", cmd_id=cmd_id)
 
         timestamps = params.get('timestamp')
         positions = params.get('position')
         
         if timestamps and positions:
-            # 2. WIPE OLD DATA (Crucial Fix)
-            self.clear_trajectory_data() 
+            # Merge this rolling window without interrupting tracking
 
-            # 3. LOAD NEW DATA
-            success = self.append_trajectory_data(timestamps, positions)
+            success = self.update_trajectory_data(params)
             
             if success:
-                self.active_cmd_id = cmd_id
-                self.target_reached_flag = False 
+                self.active_cmd_id = cmd_id if is_start else self.active_cmd_id
+                self.target_reached_flag = False if is_start else self.target_reached_flag 
                 
                 # AZ Specific: Reset unwrap state on new command
-                self.unwrapping = False 
-                self.unwrap_target = 0.0
+                self.unwrapping = False if is_start else self.unwrapping 
+                self.unwrap_target = 0.0 if is_start else self.unwrap_target
                 
                 # 4. RESUME TRACKING
                 self.tracking_active = True 
@@ -142,7 +142,7 @@ class AZSubsystem(SubsystemBase):
                 if self.unwrapping:
                     target = self.unwrap_target
                 else:
-                    target = self.get_interpolated_target(start_time)
+                    target = self.get_rolling_target(start_time)
                     # Hold last known target if data ends
                     if target is not None:
                         self.target_pos_deg = target
@@ -239,6 +239,8 @@ class AZSubsystem(SubsystemBase):
     # EXISTING: Legacy Motion Engine (Modified for Safety)
     # ============================================================
     def _start_move(self, target_deg: float, timeout_s: float):
+        from tracking_intake import get_tracking_intake
+        get_tracking_intake().manual_takeover("manual AZ")
         # --- SAFETY: Disable Trajectory Mode ---
         self.tracking_active = False 
         self.active_cmd_id = None
@@ -390,6 +392,20 @@ class AZSubsystem(SubsystemBase):
         self.send_result("ACK", cmd_id=cmd_id)
 
     def handle_command(self, msg):
+        if "Service" in msg:
+            words = self.decode_flat_manual(msg, 34)
+            if words is None:
+                log("AZ", "Rejected malformed flat Service 9 command")
+                return
+            from tracking_intake import signed_mas_degrees
+            angle = signed_mas_degrees(words[4])
+            if angle < -180.0 or angle > 360.0 or self._reject_if_blocked():
+                log("AZ", f"Rejected flat Service 9 angle {angle:.6f}")
+                return
+            result = self._start_move(angle, timeout_s=300.0)
+            if result["status"] == "OK":
+                self.send_flat_manual_response(msg, 34)
+            return
         cmd_id = msg.get("cmd_id")
         cmd = (msg.get("command") or "").upper()
         params = msg.get("params", {}) or {}
@@ -401,5 +417,15 @@ class AZSubsystem(SubsystemBase):
         f(cmd_id, params)
 
 if __name__ == "__main__":
-    sys = AZSubsystem()
-    sys.run()
+    from bus_config import build_bus_config
+    from comms.factory import create_comms_backend
+
+    bus_config = build_bus_config()
+    comms = create_comms_backend(bus_config, owner="AZ", role="subsystem")
+    comms.start()
+
+    try:
+        sys = AZSubsystem(comms)
+        sys.run()
+    finally:
+        comms.stop()

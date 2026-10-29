@@ -5,7 +5,7 @@ import time
 import threading
 
 from subsystem_base import SubsystemBase
-from bus_config import log
+from utils import log
 
 
 class AMNSubsystem(SubsystemBase):
@@ -14,15 +14,29 @@ class AMNSubsystem(SubsystemBase):
     Controls: FOCUS, DFOCUS, MIRROR_COVER, MOVE_FOLD
     """
 
-    def __init__(self):
-        super().__init__("AMN")
+    WORD_CODES = {
+        "FOCUS": 0x00350007,
+        "MIRROR_COVER": 0x27,
+        "MOVE_FOLD": 0x00340007,
+        "DARKSLIDE": 0x00310011,
+        "AGFILTER": 0x0031000E,
+        "AGFOCUS": 0x00320007,
+        "AGRADIAL": 0x00310007,
+    }
+
+    def __init__(self, comms, log_dir=None):
+        super().__init__("AMN", comms, log_dir=log_dir)
 
         self.focus_pos_mm = 0.0
         self.mirror_cover = "CLOSE"
         self.fold_position = "STOW"
+        self.darkslide = "IN"
+        self.agfilter = "OUT"
+        self.agfocus_mm = 0.0
+        self.agradial_mm = 0.0
 
-        self.vel_limit_mm_s = 0.6  # mm/sec for focus
-        self.sim_speed = 1.0
+        self.vel_limit_mm_s = 0.6
+        self.sim_speed = 10.0
 
         self.command_table = {
             "FOCUS":        self._cmd_FOCUS,
@@ -78,6 +92,60 @@ class AMNSubsystem(SubsystemBase):
             return {"status": "ERROR", "error": "TIMEDOUT"}
 
         return {"status": "OK", "error": "OK"}
+
+    def _handle_word_command(self, msg):
+        command = str(msg.get("command", "")).upper()
+        cmd_id = msg.get("cmd_id")
+        code = self.WORD_CODES.get(command)
+        if code is None:
+            self.send_word_result(command or "AMN", cmd_id, 6, 251,
+                                  error_code="NETUNK")
+            return
+        words = self.decode_command_words(msg, command, code)
+        if words is None:
+            self.send_word_result(command, cmd_id, 6, 251,
+                                  error_code="BADPARAM")
+            return
+        value = words[4]
+        if command == "FOCUS":
+            if value > 60000:
+                self.send_word_result(command, cmd_id, 6, 251, words,
+                                      error_code="BADRANGE")
+                return
+            self.send_word_result(command, cmd_id, 3, 251, words)
+            result = self._simulate_motion(
+                value / 1000.0, "focus_pos_mm", "vel_limit_mm_s", 14.0)
+            if result["status"] == "ERROR":
+                self.send_word_result(command, cmd_id, 6, 251, words,
+                                      error_code=result["error"])
+            else:
+                self.send_word_result(command, cmd_id, 2, 251, words)
+            return
+
+        valid = {
+            "MIRROR_COVER": {0: "CLOSE", 1: "OPEN"},
+            "MOVE_FOLD": {0: "STOW", 1: "1", 2: "2", 3: "3", 4: "4"},
+            "DARKSLIDE": {1: "IN", 2: "OUT"},
+            "AGFILTER": {1: "OUT", 2: "IN"},
+        }
+        if command in valid and value not in valid[command]:
+            self.send_word_result(command, cmd_id, 6, 251, words,
+                                  error_code="BADRANGE")
+            return
+        self.send_word_result(command, cmd_id, 3, 251, words)
+        if command == "MIRROR_COVER":
+            self.mirror_cover = valid[command][value]
+        elif command == "MOVE_FOLD":
+            self.fold_position = valid[command][value]
+        elif command == "DARKSLIDE":
+            self.darkslide = valid[command][value]
+        elif command == "AGFILTER":
+            self.agfilter = valid[command][value]
+        elif command == "AGFOCUS":
+            self.agfocus_mm = value / 1000.0
+        elif command == "AGRADIAL":
+            self.agradial_mm = value / 1000.0
+        self.send_word_result(command, cmd_id, 2, 251, words)
 
     def _cmd_FOCUS(self, cmd_id, params):
         pos = params.get("position")
@@ -144,6 +212,9 @@ class AMNSubsystem(SubsystemBase):
         self.send_result("DONE", cmd_id)
 
     def handle_command(self, msg):
+        if "parameters" in msg:
+            self._handle_word_command(msg)
+            return
         cmd_id = msg.get("cmd_id")
         command = (msg.get("command") or "").upper()
         params = msg.get("params", {}) or {}

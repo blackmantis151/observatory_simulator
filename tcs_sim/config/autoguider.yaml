@@ -1,0 +1,39 @@
+enabled: true
+guide_udp_host: "127.0.0.1"
+guide_udp_port: 13025
+cadence_s: 1.0
+timecode_scale: 2.0
+pixel_scale_arcsec: 1.0
+rotation_deg: 0.0
+latest_png: "autoguider_latest.png"
+snapshots_dir: "autoguider_snapshots"
+camera:
+  width: 1024
+  height: 1024
+  guide_window: 100
+  star_count: 20
+  magnitude_range: [8.0, 15.0]
+  magnitude_zero_point: 24.4
+  background_adu: 100.0
+  read_noise_adu: 5.0
+  saturation_adu: 65535.0
+  detection_threshold: 50.0
+focus:
+  minimum_mm: 0.0
+  maximum_mm: 25.0
+  default_mm: 12.5
+  optimum_mm: 12.5
+  speed_mm_s: 5.0
+  in_focus_fwhm_px: 2.0
+  defocus_px_per_mm: 0.8
+disturbance:
+  enabled: true
+  seed: null
+  fixed_initial_offset_arcsec: null
+  initial_offset_radius_arcsec: 1.5
+  drift_rms_arcsec: 0.35
+  drift_tau_s: 4.0
+  measurement_noise_arcsec: 0.03
+  vibrations:
+    - {amplitude_arcsec: 0.12, frequency_hz: 0.7, axis_deg: 20.0}
+    - {amplitude_arcsec: 0.06, frequency_hz: 2.1, axis_deg: 105.0}

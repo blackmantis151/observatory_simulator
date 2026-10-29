@@ -8,7 +8,7 @@ import json
 import numpy as np  # Needed for physics limits
 
 from subsystem_base import SubsystemBase
-from bus_config import log
+from utils import log
 
 # --- CONFIGURATION ---
 MAX_VEL = 2.0       # deg/s
@@ -24,8 +24,8 @@ class ALTSubsystem(SubsystemBase):
       2. New Trajectory Tracking (GOTO command)
     """
 
-    def __init__(self):
-        super().__init__("ALT")
+    def __init__(self, comms, log_dir=None):
+        super().__init__("ALT", comms, log_dir=log_dir)
 
         # --- Legacy State Variables ---
         self.state = "STOPPED"
@@ -78,29 +78,29 @@ class ALTSubsystem(SubsystemBase):
         6. Sends STATUS updates during tracking.
         7. Logs position to disk.
         """
-        # 1. PAUSE EVERYTHING
-        self.tracking_active = False   # <--- STOP Physics reading
-        self._motion_stop = True       # <--- STOP Legacy motion
-        if self._motion_thread and self._motion_thread.is_alive():
-            self._motion_thread.join(timeout=0.2)
+        is_start = (str(params.get("mode", "START")).upper() == "START" or
+                    params.get("trajectory_id") != self.trajectory_id)
+        if is_start:
+            self.tracking_active = False
+            self._motion_stop = True
+            if self._motion_thread and self._motion_thread.is_alive():
+                self._motion_thread.join(timeout=0.2)
         
-        self.state = "SLEWING"
+        self.state = "SLEWING" if is_start else self.state
         self.send_result("ACK", cmd_id=cmd_id)
 
         timestamps = params.get('timestamp')
         positions = params.get('position')
         
         if timestamps and positions:
-            # 2. WIPE OLD DATA (Crucial Fix)
-            self.clear_trajectory_data() 
+            # Merge this rolling window without interrupting tracking
 
-            # 3. LOAD NEW DATA
-            success = self.append_trajectory_data(timestamps, positions)
+            success = self.update_trajectory_data(params)
             
             if success:
-                self.active_cmd_id = cmd_id
-                self.target_reached_flag = False 
-                self.unwrapping = False
+                self.active_cmd_id = cmd_id if is_start else self.active_cmd_id
+                self.target_reached_flag = False if is_start else self.target_reached_flag 
+                self.unwrapping = False if is_start else self.unwrapping
                 
                 # 4. RESUME TRACKING
                 self.tracking_active = True 
@@ -128,7 +128,7 @@ class ALTSubsystem(SubsystemBase):
             # ONLY run physics if we are in Trajectory Mode
             if self.tracking_active:
                 # 1. Get Target from Base Class
-                target = self.get_interpolated_target(start_time)
+                target = self.get_rolling_target(start_time)
                 # If target is None (end of file), hold last known target
                 if target is not None:
                     self.target_pos_deg = target
@@ -197,6 +197,8 @@ class ALTSubsystem(SubsystemBase):
     # EXISTING: Legacy Motion Engine (Modified for Safety)
     # ============================================================
     def _start_move(self, target_deg: float, timeout_s: float):
+        from tracking_intake import get_tracking_intake
+        get_tracking_intake().manual_takeover("manual ALT")
         # --- SAFETY: Disable Trajectory Mode if Legacy Move starts ---
         self.tracking_active = False 
         self.active_cmd_id = None
@@ -293,6 +295,59 @@ class ALTSubsystem(SubsystemBase):
             return "STATEREJECT"
         return None
 
+    def _handle_altitude_words(self, msg):
+        command = "ALTITUDE"
+        cmd_id = msg.get("cmd_id")
+        words = self.decode_command_words(msg, command, 0x002A0007)
+        if words is None:
+            self.send_word_result(command, cmd_id, 6, 9, error_code="BADPARAM")
+            return
+        angle = words[4] / 3600000.0
+        if angle < 20.0 or angle > 90.0:
+            self.send_word_result(command, cmd_id, 6, 9, words,
+                                  error_code="BADRANGE")
+            return
+        block = self._reject_if_blocked()
+        if block:
+            self.send_word_result(command, cmd_id, 6, 9, words,
+                                  error_code=block)
+            return
+        self.send_word_result(command, cmd_id, 3, 9, words)
+        self.sim_speed = max(self.sim_speed, 10.0)
+        result = self._start_move(angle, timeout_s=100.0)
+        if result["status"] == "ERROR":
+            self.send_word_result(command, cmd_id, 6, 9, words,
+                                  error_code=result["error"])
+            return
+        if self._motion_thread is not None:
+            self._motion_thread.join(14.0)
+            if self._motion_thread.is_alive():
+                self._motion_stop = True
+                self.send_word_result(command, cmd_id, 6, 9, words,
+                                      error_code="TIMEDOUT")
+                return
+        self.send_word_result(command, cmd_id, 2, 9, words)
+
+    def handle_command(self, msg):
+        if "Service" in msg:
+            words = self.decode_flat_manual(msg, 40)
+            if words is None:
+                log("ALT", "Rejected malformed flat Service 9 command")
+                return
+            from tracking_intake import signed_mas_degrees
+            angle = signed_mas_degrees(words[4])
+            if angle < 0.0 or angle > 90.0 or self._reject_if_blocked():
+                log("ALT", f"Rejected flat Service 9 angle {angle:.6f}")
+                return
+            result = self._start_move(angle, timeout_s=100.0)
+            if result["status"] == "OK":
+                self.send_flat_manual_response(msg, 40)
+            return
+        if "parameters" in msg:
+            self._handle_altitude_words(msg)
+            return
+        super().handle_command(msg)
+
     def _cmd_ALTITUDE(self, cmd_id, params):
         self.send_result("ACK", cmd_id=cmd_id)
         angle_raw = params.get("angle")
@@ -336,5 +391,15 @@ class ALTSubsystem(SubsystemBase):
         self.send_result("ACK", cmd_id=cmd_id)
 
 if __name__ == "__main__":
-    sys = ALTSubsystem()
-    sys.run()
+    from bus_config import build_bus_config
+    from comms.factory import create_comms_backend
+
+    bus_config = build_bus_config()
+    comms = create_comms_backend(bus_config, owner="ALT", role="subsystem")
+    comms.start()
+
+    try:
+        sys = ALTSubsystem(comms)
+        sys.run()
+    finally:
+        comms.stop()

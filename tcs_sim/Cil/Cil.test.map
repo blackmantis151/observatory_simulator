@@ -1,0 +1,144 @@
+##CIL.map file on TCC(TCS). 
+
+MCP,  localhost, 13001   # Master Control Process
+CHB,  localhost, 13002   # Continuous heartbeat (part of MCP)
+UI1,  localhost, 13003   # Un-interruptable power-supply Interface task 1
+UI2,  localhost, 13004   # Un-interruptable power-supply Interface task 2
+AI1,  localhost, 13005   # Addressable power-switch Interface task 1
+AI2,  localhost, 13006   # Addressable power-switch Interface task 2
+AI3,  localhost, 13007   # Addressable power-switch Interface task 3
+MIT,  localhost, 13008   # Modem Interface Task
+
+MCB,  localhost, 13010   # Master Command Broker
+SDB,  localhost, 13011   # Status Database
+SFR,  localhost, 13012   # Status database File Recovery task
+SPT,  localhost, 13013   # Services PLC Task
+EPT,  localhost, 13014   # Enclosure PLC Task
+EPS,  localhost, 13015   # Enclosure PLC Simulator
+WMS,  localhost, 13016   # Weather Monitoring System
+AVS,  localhost, 13017   # Audio-Visual System
+
+TCS,  localhost, 13021   # Telescope Control System
+RCS,  localhost, 13022   # Robotic Control System
+OCS,  localhost, 13023   # Observatory Control System
+AGS,  localhost, 13024   # Autoguider system
+AGP,  localhost, 13025   # Autoguider guide packets
+AGG,  localhost, 13026   # Autoguider guide process
+AGI,  localhost, 13027   # Autoguider graphical interface
+
+EI0,  localhost, 13030   # Engineering Control Interface (session 0)
+EI1,  localhost, 13031   # Engineering Control Interface (session 1)
+EI2,  localhost, 13032   # Engineering Control Interface (session 2)
+EI3,  localhost, 13033   # Engineering Control Interface (session 3)
+EI4,  localhost, 13034   # Engineering Control Interface (session 4)
+
+ER0,  localhost, 13035   # Engineering Reporting Task (session 0)
+ER1,  localhost, 13036   # Engineering Reporting Task (session 1)
+ER2,  localhost, 13037   # Engineering Reporting Task (session 2)
+ER3,  localhost, 13038   # Engineering Reporting Task (session 3)
+ER4,  localhost, 13039   # Engineering Reporting Task (session 4)
+
+AZC,  localhost, 13111   # Azimuth ACN Comms-In
+AZN,  localhost, 13112   # Azimuth ACN Control Node
+AZS,  localhost, 13113   # Azimuth ACN Comms-Out
+AZR,  localhost, 13114   # Azimuth ACN SDB Reporting
+AZT,  localhost, 13115   # Azimuth ACN Test
+AZL,  localhost, 13116   # Azimuth ACN Logger
+
+ELC,  localhost, 13121   # Elevation ACN Comms-In
+ELN,  localhost, 13122   # Elevation ACN Control Node
+ELS,  localhost, 13123   # Elevation ACN Comms-Out
+ELR,  localhost, 13124   # Elevation ACN SDB Reporting
+ELT,  localhost, 13125   # Elevation ACN Test
+ELL,  localhost, 13126   # Elevation ACN Logger
+
+CSC,  localhost, 13131   # Cassegrain ACN Comms-In
+CSN,  localhost, 13132   # Cassegrain ACN Control Node
+CSS,  localhost, 13133   # Cassegrain ACN Comms-Out
+CSR,  localhost, 13134   # Cassegrain ACN SDB Reporting
+CST,  localhost, 13135   # Cassegrain ACN Test
+CSL,  localhost, 13136   # Cassegrain ACN Logger
+
+OMC,  localhost, 13171   # Auxiliary Mechanism Comms-In
+OMN,  localhost, 13172   # Auxiliary Mechanism Control Node
+OMS,  localhost, 13173   # Auxiliary Mechanism Comms-Out
+OMR,  localhost, 13174   # Auxiliary Mechanism SDB Reporting
+OMT,  localhost, 13175   # Auxiliary Mechanism Test
+OML,  localhost, 13176   # Auxiliary Mechanism Logger
+
+MSC,  localhost, 13181   # Primary Mirror Support Comms-In
+MSN,  localhost, 13182   # Primary Mirror Support Control Node
+MSS,  localhost, 13183   # Primary Mirror Support Comms-Out
+MSR,  localhost, 13184   # Primary Mirror Support SDB Reporting
+MST,  localhost, 13185   # Primary Mirror Support Test
+MSL,  localhost, 13186   # Primary Mirror Support Logger
+
+NDC,  localhost, 13401   # Nasmyth X+ ACN Comms-In
+NDN,  localhost, 13402   # Nasmyth X+ ACN Control Node
+NDS,  localhost, 13403   # Nasmyth X+ ACN Comms-Out
+NDR,  localhost, 13404   # Nasmyth X+ ACN SDB Reporting
+NDT,  localhost, 13405   # Nasmyth X+ ACN Test
+NDL,  localhost, 13406   # Nasmyth X+ ACN Logger
+
+NWC,  localhost, 13411   # Nasmyth X- ACN Comms-In
+NWN,  localhost, 13412   # Nasmyth X- ACN Control Node
+NWS,  localhost, 13413   # Nasmyth X- ACN Comms-Out
+NWR,  localhost, 13414   # Nasmyth X- ACN SDB Reporting
+NWT,  localhost, 13415   # Nasmyth X- ACN Test
+NWL,  localhost, 13416   # Nasmyth X- ACN Logger
+
+RLC,  localhost, 13421   # Generic Roll Axis Comms-In
+RLN,  localhost, 13422   # Generic Roll Axis Control Node
+RLS,  localhost, 13423   # Generic Roll Axis Comms-Out
+RLR,  localhost, 13424   # Generic Roll Axis SDB Reporting
+RLT,  localhost, 13425   # Generic Roll Axis Test
+RLL,  localhost, 13426   # Generic Roll Axis Logger
+
+PTC,  localhost, 13431   # Generic Pitch Axis Comms-In
+PTN,  localhost, 13432   # Generic Pitch Axis Control Node
+PTS,  localhost, 13433   # Generic Pitch Axis Comms-Out
+PTR,  localhost, 13434   # Generic Pitch Axis SDB Reporting
+PTT,  localhost, 13435   # Generic Pitch Axis Test
+PTL,  localhost, 13436   # Generic Pitch Axis Logger
+
+DOC,  localhost, 13441   # Dome Azimuth Comms-In
+DON,  localhost, 13442   # Dome Azimuth Control Node
+DOS,  localhost, 13443   # Dome Azimuth Comms-Out
+DOR,  localhost, 13444   # Dome Azimuth SDB Reporting
+DOT,  localhost, 13445   # Dome Azimuth Test
+DOL,  localhost, 13446   # Dome Azimuth Logger
+
+WOC,  localhost, 13451   # Auxiliary Mechanisms Comms-In
+WON,  localhost, 13452   # Auxiliary Mechanisms Control Node
+WOS,  localhost, 13453   # Auxiliary Mechanisms Comms-Out
+WOR,  localhost, 13454   # Auxiliary Mechanisms SDB Reporting
+WOT,  localhost, 13455   # Auxiliary Mechanisms Test
+WOL,  localhost, 13456   # Auxiliary Mechanisms Logger
+
+DGS,  localhost, 13461   # Autoguider system
+DGP,  localhost, 13462   # Autoguider guide packets
+DGG,  localhost, 13463   # Autoguider guide process
+DGI,  localhost, 13464   # Autoguider graphical interface
+
+WGS,  localhost, 13471   # Autoguider system
+WGP,  localhost, 13472   # Autoguider guide packets
+WGG,  localhost, 13473   # Autoguider guide process
+WGI,  localhost, 13474   # Autoguider graphical interface
+
+PGS,  localhost, 13481   # Autoguider system
+PGP,  localhost, 13482   # Autoguider guide packets
+PGG,  localhost, 13483   # Autoguider guide process
+PGI,  localhost, 13484   # Autoguider graphical interface
+
+TU0,  localhost, 17200   # Test Unit 0
+TU1,  localhost, 17201   # Test Unit 1
+TU2,  localhost, 17202   # Test Unit 2
+TU3,  localhost, 17203   # Test Unit 3
+TU4,  localhost, 17204   # Test Unit 4
+TU5,  localhost, 17205   # Test Unit 5
+TU6,  localhost, 17206   # Test Unit 6
+TU7,  localhost, 17207   # Test Unit 7
+TU8,  localhost, 17208   # Test Unit 8
+TU9,  localhost, 17209   # Test Unit 9
+TES,  localhost, 17210   # Test Echo Server
+TMB,  localhost, 17211   # Test Message Broker

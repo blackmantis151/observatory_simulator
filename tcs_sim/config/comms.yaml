@@ -1,0 +1,54 @@
+comms:
+  backend: zmq          # valid values: zmq, cil
+  timeout_ms: 5000
+
+network:
+  tcs_ip: "127.0.0.1"
+  scc_ip: "127.0.0.1"
+
+zmq:
+  cmd_port: 5555
+  result_port: 5556
+  heartbeat_port: 5557
+  scc_to_tcs_port: 5558
+  status_port: 5559
+
+# CIL mode is intentionally strict. Populate services/outputs from the
+# official mechanism ICDs before changing comms.backend to cil. Empty profiles
+# fail startup; the simulator will never fall back to echoing or ZMQ.
+cil:
+  bridge_executable: "/opt/observatory-stimulator/bin/cil_bridge"
+  map_file: "/etc/tcs-gateway/Cil.map"
+  receive_timeout_ms: 20
+  transaction_timeout_ms: 30000
+  endpoints:
+    ALT:
+      identities:
+        - name: ELC
+          services: {}
+      outputs: {}
+    AZ:
+      identities:
+        - name: AZC
+          services: {}
+      outputs: {}
+    CAS:
+      identities:
+        - name: CSC
+          services: {}
+      outputs: {}
+    AMN:
+      identities:
+        - name: OMC
+          services: {}
+      outputs: {}
+    ENC:
+      identities:
+        - name: EPT
+          services: {}
+      outputs: {}
+    SCC:
+      identities:
+        - name: OCS
+          services: {}
+      outputs: {}

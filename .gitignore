@@ -5,6 +5,8 @@ __pycache__/
 
 # C extensions
 *.so
+tcs_sim/Cil/*.o
+tcs_sim/Cil/cil_bridge
 
 # Distribution / packaging
 .Python
