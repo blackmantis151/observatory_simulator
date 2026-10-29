@@ -1,10 +1,13 @@
 [project]
 name = "observatory-stimulator"
 version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
 dependencies = [
-    "matplotlib",
-    "numpy",
-    "pandas",
+    "matplotlib>=3.10.9",
+    "numpy>=2.4.6",
+    "pandas>=3.0.3",
     "pyyaml>=6.0.2",
-    "pyzmq",
+    "pyzmq>=27.1.0",
 ]

@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+# Observatory Simulator for the 2m Telescope at the IUCAA Girawali Observatory 
+# Copyright (C) 2026  Harshit Krishna, Soumadip Bhowmick & Manthan Bhagatfrom dataclasses import dataclass
 from config_loader import load_config
 
 

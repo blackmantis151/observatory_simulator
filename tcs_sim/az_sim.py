@@ -1,7 +1,10 @@
+# Observatory Simulator for the 2m Telescope at the IUCAA Girawali Observatory 
+# Copyright (C) 2026  Harshit Krishna, Soumadip Bhowmick & Manthan Bhagat
+
 import threading
 import time
 import json
-import numpy as np  # Needed for physics limits
+import numpy as np
 
 from subsystem_base import SubsystemBase
 from utils import log
